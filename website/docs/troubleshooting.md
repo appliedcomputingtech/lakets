@@ -63,6 +63,12 @@ To resolve:
    ```
 3. Re-run the Partition Manager — it recreates the missing chunks with UTC-aligned names.
 
+### Partition Manager fails with `partition "..." would overlap partition "..."`
+
+Fixed after **v0.1.3**. Before that, `_ensure_partitions` aligned chunk boundaries to `'2000-01-01'::timestamptz`, which PostgreSQL reads in the **session timezone**. A ChronoTable created from a session in, say, `Asia/Kolkata` got 1-day chunks starting at 18:30 UTC; a later run from a UTC session (the scheduled job) computed chunks starting at 00:00 UTC, which overlap them, and the `CREATE TABLE ... PARTITION OF` failed with SQLSTATE `42P17`. The tiering write-tracking trigger had the same dependency, so a write from a session in another timezone did not stamp its chunk's `last_write_lsn`.
+
+Upgrade (reinstall `dist/lakets.sql`). Chunk boundaries now follow the ChronoTable's existing chunks, or midnight UTC for a new ChronoTable, whatever the session timezone, so the next run continues the grid the table already has. Until you upgrade, run the Partition Manager and every writer in the timezone the ChronoTable was created in (UTC for the scheduled jobs).
+
 ## RollUps
 
 ### `refresh_rollup()` returns `FALSE`

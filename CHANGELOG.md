@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Fixed
+
+- **Chunk boundaries no longer depend on the session timezone.** `_ensure_partitions` and the tiering write-tracking trigger aligned chunks to `'2000-01-01'::timestamptz`, which PostgreSQL reads in the **session** `TimeZone`. A ChronoTable created from an `Asia/Kolkata` session got 1-day partitions starting at 18:30 UTC; the next Partition Manager run in UTC computed boundaries at 00:00 UTC, which overlap them, and failed with `would overlap partition` (SQLSTATE `42P17`). The trigger, binning rows in the writer's zone, matched no chunk for a write from another zone and left its `last_write_lsn` unchanged: a chunk written only that way was never stamped (the durability gate deferred it for ever), and a late write into an older chunk did not hold the gate back until CDF had flushed it. Both now align to `lakets._chunk_grid_origin()`: the table's existing chunks when it has any, otherwise midnight UTC. v0.1.3 made chunk *names* timezone-stable; this does the same for their boundaries.
+
+Upgrade by reinstalling `dist/lakets.sql` (function-level — no schema migration required). A ChronoTable whose chunks an earlier release built on a non-UTC grid keeps that grid, so its next Partition Manager run does not collide with them.
+
 ## [0.1.3] - 2026-06-09
 
 ### Fixed
