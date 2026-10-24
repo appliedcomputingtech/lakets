@@ -146,7 +146,13 @@ Pre-creates partitions for a ChronoTable. Called automatically by `create_chrono
 | `p_range_start` | TIMESTAMPTZ | `NULL` | Explicit range start (overrides counts) |
 | `p_range_end` | TIMESTAMPTZ | `NULL` | Explicit range end (overrides counts) |
 
-**Returns**: `INT` — number of new partitions created. Idempotent — skips existing partitions.
+**Returns**: `INT` — number of new partitions created. Idempotent — skips existing partitions. Chunk boundaries align to `_chunk_grid_origin`, whatever the session timezone.
+
+### `_chunk_grid_origin(p_chronotable_id)`
+
+The instant a ChronoTable's chunk boundaries align to: the `range_start` of its latest chunk, or `2000-01-01 00:00:00+00` (midnight UTC) for a ChronoTable with no chunks yet. Used by `_ensure_partitions` and the tiering write-tracking trigger, so both compute the same boundaries from any session, and a table keeps the grid it was built on.
+
+**Returns**: `TIMESTAMPTZ`
 
 ### `_resolve_partition_parent(p_schema, p_table)`
 

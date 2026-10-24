@@ -62,6 +62,90 @@ DO $$ DECLARE v BIGINT; BEGIN
     ASSERT v = 1, 'T8 FAILED'; RAISE NOTICE 'T8 PASSED: _chronotable_registry view ok';
 END $$;
 
+-- T9: chunk boundaries do not depend on the session TimeZone. Before the fix,
+-- the UTC call below failed: its partitions overlapped the Asia/Kolkata ones.
+DROP TABLE IF EXISTS public.ct_tz_test CASCADE;
+DELETE FROM lakets._chunk_metadata
+WHERE chronotable_id IN (
+    SELECT id FROM lakets._chronotable_registry
+    WHERE table_name = 'ct_tz_test'
+);
+DELETE FROM lakets._chronotable_registry
+WHERE table_name = 'ct_tz_test';
+
+DO $$ DECLARE v_id INT; v_off_grid BIGINT; BEGIN
+    SET LOCAL TimeZone = 'Asia/Kolkata';
+    CREATE TABLE public.ct_tz_test (time TIMESTAMPTZ NOT NULL, val DOUBLE PRECISION);
+    SELECT lakets.create_chronotable('ct_tz_test', 'time', '1 day') INTO v_id;
+
+    SET LOCAL TimeZone = 'UTC';
+    PERFORM lakets._ensure_partitions(v_id, 2, 5);
+    SET LOCAL TimeZone = 'America/New_York';
+    PERFORM lakets._ensure_partitions(v_id, 2, 5);
+
+    SELECT count(*) INTO v_off_grid FROM lakets._chunk_metadata
+    WHERE chronotable_id = v_id
+      AND date_bin('1 day', range_start, '2000-01-01 00:00:00+00'::timestamptz) <> range_start;
+    ASSERT v_off_grid = 0, format('T9 FAILED: %s chunk(s) off the UTC day grid', v_off_grid);
+    RAISE NOTICE 'T9 PASSED: chunks align to UTC midnight from any session TimeZone';
+END $$;
+
+DROP TABLE IF EXISTS public.ct_tz_test CASCADE;
+DELETE FROM lakets._chunk_metadata
+WHERE chronotable_id IN (
+    SELECT id FROM lakets._chronotable_registry
+    WHERE table_name = 'ct_tz_test'
+);
+DELETE FROM lakets._chronotable_registry
+WHERE table_name = 'ct_tz_test';
+
+-- T10: a table whose chunks were built on another grid (by an earlier release,
+-- from a non-UTC session) keeps that grid instead of overlapping it.
+DROP TABLE IF EXISTS public.ct_grid_test CASCADE;
+DELETE FROM lakets._chunk_metadata
+WHERE chronotable_id IN (
+    SELECT id FROM lakets._chronotable_registry
+    WHERE table_name = 'ct_grid_test'
+);
+DELETE FROM lakets._chronotable_registry
+WHERE table_name = 'ct_grid_test';
+
+DO $$
+DECLARE
+    v_id INT;
+    v_off_grid BIGINT;
+    v_start TIMESTAMPTZ := date_bin('1 day', now(), '2000-01-01 00:00:00+05:30'::timestamptz);
+BEGIN
+    CREATE TABLE public.ct_grid_test (time TIMESTAMPTZ NOT NULL, val DOUBLE PRECISION)
+        PARTITION BY RANGE (time);
+    INSERT INTO lakets._chronotable_registry (schema_name, table_name, time_column, chunk_interval)
+    VALUES ('public', 'ct_grid_test', 'time', '1 day')
+    RETURNING id INTO v_id;
+    EXECUTE format(
+        'CREATE TABLE public.ct_grid_test_legacy PARTITION OF public.ct_grid_test FOR VALUES FROM (%L) TO (%L)',
+        v_start, v_start + INTERVAL '1 day');
+    INSERT INTO lakets._chunk_metadata (chronotable_id, chunk_name, range_start, range_end, status)
+    VALUES (v_id, 'public.ct_grid_test_legacy', v_start, v_start + INTERVAL '1 day', 'active');
+
+    SET LOCAL TimeZone = 'UTC';
+    PERFORM lakets._ensure_partitions(v_id, 2, 5);
+
+    SELECT count(*) INTO v_off_grid FROM lakets._chunk_metadata
+    WHERE chronotable_id = v_id
+      AND date_bin('1 day', range_start, v_start) <> range_start;
+    ASSERT v_off_grid = 0, format('T10 FAILED: %s chunk(s) off the existing grid', v_off_grid);
+    RAISE NOTICE 'T10 PASSED: _ensure_partitions continues an existing chunk grid';
+END $$;
+
+DROP TABLE IF EXISTS public.ct_grid_test CASCADE;
+DELETE FROM lakets._chunk_metadata
+WHERE chronotable_id IN (
+    SELECT id FROM lakets._chronotable_registry
+    WHERE table_name = 'ct_grid_test'
+);
+DELETE FROM lakets._chronotable_registry
+WHERE table_name = 'ct_grid_test';
+
 -- Cleanup
 DROP TABLE IF EXISTS public.ct_test CASCADE;
 DELETE FROM lakets._chunk_metadata WHERE chronotable_id IN (SELECT id FROM lakets._chronotable_registry WHERE table_name='ct_test');

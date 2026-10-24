@@ -136,4 +136,30 @@ BEGIN
     RAISE NOTICE 'TEST 8 PASSED: write-tracking stamps only the written chunk';
 END $$;
 
+-- TEST 9: a write from a non-UTC session stamps the chunk that received it.
+-- Before the fix, the trigger binned rows on the session's local midnight,
+-- matched no chunk, and left last_write_lsn behind the write.
+DO $$
+DECLARE
+    v_id INT;
+    v_lsn PG_LSN;
+BEGIN
+    SELECT id INTO v_id FROM lakets._chronotable_registry WHERE table_name = 'tier_test';
+    PERFORM lakets._ensure_partitions(v_id, p_range_start := now(), p_range_end := now());
+
+    UPDATE lakets._chunk_metadata SET last_write_lsn = '0/1'::pg_lsn
+    WHERE chronotable_id = v_id AND range_start <= now() AND now() < range_end;
+
+    SET LOCAL TimeZone = 'Asia/Kolkata';
+    INSERT INTO public.tier_test (time, v) VALUES (now(), 2.0);
+
+    SELECT last_write_lsn INTO v_lsn
+    FROM lakets._chunk_metadata
+    WHERE chronotable_id = v_id AND range_start <= now() AND now() < range_end;
+    ASSERT v_lsn IS NOT NULL AND v_lsn <> '0/1'::pg_lsn,
+        'TEST 9 FAILED: a write from an Asia/Kolkata session did not stamp its chunk';
+
+    RAISE NOTICE 'TEST 9 PASSED: write-tracking stamps the written chunk from any session TimeZone';
+END $$;
+
 SELECT 'ALL TIERING TESTS PASSED' AS result;

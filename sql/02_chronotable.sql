@@ -4,6 +4,29 @@
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
+-- _chunk_grid_origin: The instant a ChronoTable's chunk boundaries align to.
+-- An existing chunk's range_start when the table has one, so a table keeps
+-- the grid it was built on; otherwise midnight UTC on 2000-01-01. The origin
+-- must be an absolute instant: a bare '2000-01-01'::timestamptz is read in the
+-- session TimeZone, so sessions in different zones would compute different
+-- boundaries and build overlapping partitions.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION lakets._chunk_grid_origin(p_chronotable_id INT)
+RETURNS TIMESTAMPTZ
+LANGUAGE sql
+STABLE
+AS $$
+    SELECT COALESCE(
+        (SELECT cm.range_start
+         FROM lakets._chunk_metadata cm
+         WHERE cm.chronotable_id = p_chronotable_id
+         ORDER BY cm.range_start DESC
+         LIMIT 1),
+        '2000-01-01 00:00:00+00'::timestamptz
+    );
+$$;
+
+-- ---------------------------------------------------------------------------
 -- _ensure_partitions: Pre-creates partitions for a ChronoTable.
 -- Supports both relative (past/future count) and explicit range.
 -- Idempotent — skips partitions that already exist.
@@ -28,6 +51,7 @@ DECLARE
     v_table TEXT;
     v_rs TIMESTAMPTZ;
     v_re TIMESTAMPTZ;
+    v_origin TIMESTAMPTZ;
 BEGIN
     SELECT schema_name, table_name, chunk_interval
     INTO v_schema, v_table, v_interval
@@ -38,18 +62,20 @@ BEGIN
         RAISE EXCEPTION 'ChronoTable with id % not found', p_chronotable_id;
     END IF;
 
+    v_origin := lakets._chunk_grid_origin(p_chronotable_id);
+
     -- Use explicit range if provided, otherwise calculate from now
     IF p_range_start IS NOT NULL THEN
-        v_rs := date_bin(v_interval, p_range_start, '2000-01-01'::timestamptz);
+        v_rs := date_bin(v_interval, p_range_start, v_origin);
     ELSE
-        v_rs := date_bin(v_interval, v_now, '2000-01-01'::timestamptz)
+        v_rs := date_bin(v_interval, v_now, v_origin)
                 - (v_interval * p_past_count);
     END IF;
 
     IF p_range_end IS NOT NULL THEN
-        v_re := date_bin(v_interval, p_range_end, '2000-01-01'::timestamptz) + v_interval;
+        v_re := date_bin(v_interval, p_range_end, v_origin) + v_interval;
     ELSE
-        v_re := date_bin(v_interval, v_now, '2000-01-01'::timestamptz)
+        v_re := date_bin(v_interval, v_now, v_origin)
                 + (v_interval * (p_future_count + 1));
     END IF;
 

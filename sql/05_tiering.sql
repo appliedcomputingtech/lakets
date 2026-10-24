@@ -50,7 +50,7 @@ $$;
 -- Why parent + transition table: a statement-level trigger on a partition does
 -- not fire for inserts routed through the parent, and chunk_name is stored
 -- schema-qualified, so the row->chunk mapping is recomputed here via date_bin
--- (same origin '2000-01-01' as _ensure_partitions).
+-- (same origin as _ensure_partitions: _chunk_grid_origin).
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION lakets._stamp_tiered_chunk_lsn()
 RETURNS TRIGGER
@@ -61,6 +61,7 @@ DECLARE
     v_ct_id    INT;
     v_time_col TEXT;
     v_interval INTERVAL;
+    v_origin   TIMESTAMPTZ;
 BEGIN
     v_parent := lakets._resolve_partition_parent(TG_TABLE_SCHEMA, TG_TABLE_NAME);
 
@@ -74,6 +75,8 @@ BEGIN
         RETURN NULL;
     END IF;
 
+    v_origin := lakets._chunk_grid_origin(v_ct_id);
+
     -- pg_current_wal_lsn() here is a lower bound on the writing txn's commit
     -- LSN. That imprecision is immaterial: tier_chunk only ever drops chunks
     -- whose time window ended at least p_after ago (days), by which point
@@ -85,7 +88,7 @@ BEGIN
               WHERE cm.chronotable_id = $1
                 AND cm.range_start IN (SELECT DISTINCT date_bin($2, %I, $3) FROM _old_rows)',
             v_time_col)
-        USING v_ct_id, v_interval, '2000-01-01'::timestamptz;
+        USING v_ct_id, v_interval, v_origin;
     ELSE
         EXECUTE format(
             'UPDATE lakets._chunk_metadata cm
@@ -93,7 +96,7 @@ BEGIN
               WHERE cm.chronotable_id = $1
                 AND cm.range_start IN (SELECT DISTINCT date_bin($2, %I, $3) FROM _new_rows)',
             v_time_col)
-        USING v_ct_id, v_interval, '2000-01-01'::timestamptz;
+        USING v_ct_id, v_interval, v_origin;
     END IF;
 
     RETURN NULL;
