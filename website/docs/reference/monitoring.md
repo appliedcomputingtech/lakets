@@ -25,7 +25,7 @@ SELECT * FROM lakets.lakets_metrics();
 -- lakets_rollup_refresh_lag_seconds | 45.2 | {"rollup": "hourly_sensors"}
 ```
 
-Chunk counts are emitted as a single `lakets_chunks_total` metric labelled by `status` (one row per status), and RollUp lag is emitted as two metrics: `lakets_rollup_watermark_lag_seconds` and `lakets_rollup_refresh_lag_seconds`.
+Chunk counts are emitted as a single `lakets_chunks_total` metric labelled by `status` (one row per status), and RollUp lag is emitted as two metrics: `lakets_rollup_watermark_lag_seconds` and `lakets_rollup_refresh_lag_seconds`. The number of buckets waiting in the invalidation log is `lakets_rollup_invalidation_log_depth`, labelled by `rollup` (no row for a RollUp with nothing pending).
 
 ### Tiering metrics
 

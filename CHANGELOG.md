@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ## [Unreleased]
 
+### Fixed
+
+- **`lakets_metrics()` no longer fails on every call.** The `lakets_rollup_invalidation_log_depth` metric grouped by `_rollup_invalidation_log.tier`, a column the 0.1.0 schema no longer has, so the whole function raised `column il.tier does not exist` and returned no metrics at all. The metric is now labelled by `rollup` only.
+
+Upgrade by reinstalling `dist/lakets.sql` (the change is function-level — no schema migration required).
+
 ## [0.1.3] - 2026-06-09
 
 ### Fixed
