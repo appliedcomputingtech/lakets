@@ -167,4 +167,57 @@ BEGIN
     DELETE FROM lakets._chronotable_registry WHERE table_name = 'mon_ts_test';
 END $$;
 
+-- T8: lakets_metrics reports the invalidation log depth per RollUp
+DO $$
+DECLARE
+    v_rollup_id INT;
+    v_depth DOUBLE PRECISION;
+    v_labels JSONB;
+BEGIN
+    IF EXISTS (SELECT 1 FROM lakets._rollup_registry WHERE name = 'mon_ru_test') THEN
+        PERFORM lakets.drop_rollup('mon_ru_test');
+    END IF;
+    DROP TABLE IF EXISTS public.mon_ru_src CASCADE;
+    DELETE FROM lakets._chunk_metadata WHERE chronotable_id IN (
+        SELECT id FROM lakets._chronotable_registry WHERE table_name = 'mon_ru_src'
+    );
+    DELETE FROM lakets._chronotable_registry WHERE table_name = 'mon_ru_src';
+
+    CREATE TABLE public.mon_ru_src (time TIMESTAMPTZ NOT NULL, val DOUBLE PRECISION);
+    INSERT INTO mon_ru_src SELECT now() - (i || ' hours')::interval, random() * 100
+    FROM generate_series(1, 24) s(i);
+    PERFORM lakets.create_chronotable('mon_ru_src', 'time', '1 day');
+    SELECT lakets.create_rollup(
+        'mon_ru_test',
+        $q$SELECT lakets.time_bucket('1 hour'::interval, time) AS bucket, count(*) AS cnt
+          FROM mon_ru_src
+          GROUP BY 1$q$,
+        '1 hour',
+        'mon_ru_src'
+    ) INTO v_rollup_id;
+
+    DELETE FROM lakets._rollup_invalidation_log WHERE rollup_id = v_rollup_id;
+    INSERT INTO lakets._rollup_invalidation_log (rollup_id, bucket_start)
+    VALUES (v_rollup_id, date_trunc('hour', now()) - INTERVAL '3 hours'),
+           (v_rollup_id, date_trunc('hour', now()) - INTERVAL '2 hours');
+
+    SELECT metric_value, labels INTO v_depth, v_labels
+    FROM lakets.lakets_metrics()
+    WHERE metric_name = 'lakets_rollup_invalidation_log_depth'
+      AND labels->>'rollup' = 'mon_ru_test';
+
+    ASSERT v_depth = 2, format('expected invalidation log depth 2, got %s', v_depth);
+    ASSERT v_labels = jsonb_build_object('rollup', 'mon_ru_test'),
+        format('unexpected labels %s', v_labels);
+    RAISE NOTICE 'T8 PASSED: invalidation log depth=% labels=%', v_depth, v_labels;
+
+    -- Cleanup
+    PERFORM lakets.drop_rollup('mon_ru_test');
+    DROP TABLE IF EXISTS public.mon_ru_src CASCADE;
+    DELETE FROM lakets._chunk_metadata WHERE chronotable_id IN (
+        SELECT id FROM lakets._chronotable_registry WHERE table_name = 'mon_ru_src'
+    );
+    DELETE FROM lakets._chronotable_registry WHERE table_name = 'mon_ru_src';
+END $$;
+
 SELECT 'ALL MONITORING TESTS PASSED' as result;

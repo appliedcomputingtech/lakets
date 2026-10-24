@@ -73,14 +73,14 @@ BEGIN
     FROM lakets._rollup_registry r
     WHERE r.last_refreshed_at IS NOT NULL;
 
-    -- RollUp invalidation log depth (pending dirty buckets per RollUp by tier)
+    -- RollUp invalidation log depth (pending dirty buckets per RollUp)
     RETURN QUERY
     SELECT 'lakets_rollup_invalidation_log_depth'::TEXT,
            count(*)::DOUBLE PRECISION,
-           jsonb_build_object('rollup', r.name, 'tier', il.tier)
+           jsonb_build_object('rollup', r.name)
     FROM lakets._rollup_invalidation_log il
     JOIN lakets._rollup_registry r ON il.rollup_id = r.id
-    GROUP BY r.name, il.tier;
+    GROUP BY r.name;
 
     -- Sync status per ChronoTable
     RETURN QUERY
